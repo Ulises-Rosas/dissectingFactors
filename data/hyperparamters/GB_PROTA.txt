@@ -1,0 +1,1 @@
+{'max_depth': 9, 'subsample': 0.4375, 'gamma': 5.05, 'min_child_weight': 2.5749999999999997, 'learning_rate': 0.055650000000000005}
