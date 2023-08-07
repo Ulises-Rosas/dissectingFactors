@@ -8,3 +8,4 @@
 - numpy
 - pickle
 - sklearn
+- xgbooost
