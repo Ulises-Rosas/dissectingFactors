@@ -7,3 +7,4 @@
 - Pandas
 - numpy
 - pickle
+- sklearn
