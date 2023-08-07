@@ -6,6 +6,7 @@
 - Keras
 - Pandas
 - numpy
+- scipy
 - pickle
 - sklearn
 - xgbooost

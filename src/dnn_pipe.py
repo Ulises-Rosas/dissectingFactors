@@ -1,190 +1,60 @@
-import numpy as np
 import os
+import sys
+import time
+import pickle
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # import csv
-import sys
 import numpy as np 
+import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
-import pandas as pd
-import pickle
 from recurrent_utils import *
 
 import tensorflow as tf
 from tensorflow import keras
-import time
-
-# debugging --------------------------------------
-import os
-# base_path = '/condo/fishevolab/urosas/McL/data/prota'
-suffix     = 'FLAT'
-# out_folder = "/condo/fishevolab/urosas/McL/DNN/flat"
-out_folder = '/Users/ulises/Desktop/GOL/software/GGpy/comparing_models/flat'
-
-max_trials = 200
-n_epochs = 1500
-boots = 5
-
-# n_epochs_encoder = 3
-# max_trials = 2
-# n_epochs = 5
-# boots = 2
-
-# encoder_file = '/condo/fishevolab/urosas/McL/DNN_Autoencoder/prota/prota_all_vars_L0.356052_E0.182115_4Layers.pkl'
-# out_folder = "/condo/fishevolab/urosas/McL/DNN_Autoencoder/prota"
-
-if suffix == 'PROTA':
-    base_path = '/Users/ulises/Desktop/GOL/software/GGpy/proofs_ggi/postRaxmlBug/prota/xgboostclass'
-    # base_path = '/condo/fishevolab/urosas/McL/data/prota'
-    file_comparisons = os.path.join(base_path, 'comparisonkey.txt')
-    features_file    = os.path.join(base_path, 'features_prota_features_last.tsv')
-    all_ggi_results  = os.path.join(base_path, 'joined_1017_two_hypos_prota.txt' )
-
-else:
-    base_path = '/Users/ulises/Desktop/GOL/software/GGpy/proofs_ggi/postRaxmlBug/flatfishes/two_hypo_ASTRAL-ML/version2'
-    # base_path = '/condo/fishevolab/urosas/McL/data/flat'
-
-    file_comparisons = os.path.join(base_path, 'comparisonfile_3.txt')
-    features_file    = os.path.join(base_path, 'features_991exons_fishlife_2_aln_name.tsv')
-    all_ggi_results  = os.path.join(base_path, 'join_ggi_flat_version2.tsv')
 
 
-# base_path = '/Users/ricardobetancur/Desktop/Ulises/ggpy_tests'
-# seq_path = '/Users/ricardobetancur/Desktop/Ulises/ggpy_tests/alns'
+# data --------------------------------------
+suffix = 'PROTA'
+out_folder = "./../data"
+base_path = './../data'
+
+# Features: qcutils results
+features_file    = os.path.join(base_path, 'prota_features.tsv')
+# Labels: GGI results
+all_ggi_results  = os.path.join(base_path, 'joined_1017_two_hypos_prota.txt' )
+# data --------------------------------------
+
+
 self = Post_ggi(
     feature_file = features_file,
     all_ggi_results = all_ggi_results,
-    file_comparisons = file_comparisons,
-    threads = 6,
 )
 
-if suffix == 'PROTA':
-
-    tax_prop = pd.read_csv(
-                os.path.join(base_path, 'features_exons1024'),
-                sep = "\t"
-            )[['aln_base', 'tax_prop']]
-
-    new_df = (
-        pd.merge(self.features, 
-                tax_prop, 
-                on = 'aln_base', 
-                how='left').query('tax_prop == 1.').drop('tax_prop', axis=1) 
-    )
-else:
-    new_df = self.features
-
-# np.abs(np.array([-1,1,-2]))
-for c in self.drop_columns:
-    try:
-        new_df = new_df.drop( labels = c, axis = 1 )
-
-    except KeyError:
-        pass
-
-# new_df = new_df.drop(tree_vars, axis=1)
-added_features = os.path.join(base_path, 'new_features_%s.csv' % suffix) # for flat
-# added_features  = os.path.join(base_path, 'new_features_PROTA.csv') # for prota
-
-new_df = correct_flat_features(
-            added_features ,
-            new_df,
-            filtering_features=None
-        )
+new_df = self.features
 ggi_pd = pd.DataFrame( self.ggi_df[1:], columns=self.ggi_df[0]   )
 
 all_labels, new_df = make_au_labels( ggi_pd, new_df )
 new_df_num = new_df.drop(["aln_base"], axis = 1)
 
 
-################# data viz
-def dim_red(X, n_com):
-    # extracting averages
-    X_centered = (X - np.mean(X, axis=0))
+########## iteration parameters ###################
+max_trials = 200 # bayesian optimization
+n_epochs = 1500 
+boots = 5 
+######## iteration parameters ###################
 
-    # U,E,Vt (SVD)
-    _,E,Vt = np.linalg.svd(X_centered)
-    # print(E)
-    # PCA components
-    W = Vt.T[:, :n_com]
-    # projection into n_com dimensions
-    return X_centered.dot(W)
-
-def gls_errors(X, y, pseudo_inv = False):
-
-    if pseudo_inv:
-        B_gls = np.linalg.pinv(X.T.dot(X)).dot(X.T.dot(y))
-
-    else:
-        B_gls = np.linalg.inv(X.T.dot(X)).dot(X.T.dot(y))
-
-    return X.dot(B_gls) - y
-
-def test_normality_linear(X, y, pseudo_inv = False):
-    from scipy import stats
-
-    errors = gls_errors(X, y, pseudo_inv=pseudo_inv).flatten()
-    res = stats.normaltest(errors)
-    return res.pvalue,errors
-
-def standard_scale(u):
-    return (u - np.mean(u, axis=0))/np.std( u, axis= 0)
-
-def plot_errors(X, y, pseudo_inv =  False, bins = 30):
-
-    pval,errors = test_normality_linear(X, y, pseudo_inv = pseudo_inv)
-
-    fig, ax = plt.subplots()
-    # the histogram of the data
-    ax.hist(errors, bins, density=True)
-    ax.set_title('p-value = %s' % pval)
-    plt.show()
-
-X = standard_scale(new_df_num.to_numpy())
-plot_errors(X,all_labels, bins = 20, pseudo_inv= True)
-
-
-# errors = gls_errors(X, all_labels, pseudo_inv=True).flatten()
-
-# test_normality_linear(X, all_labels, pseudo_inv = True)
-
-# num_bins = 30
-# fig, ax = plt.subplots()
-
-# # the histogram of the data
-# ax.hist(errors, num_bins, density=True)
-# ax.set_title('P-val: %s' % 1)
-
-
-
-# from sklearn.decomposition import PCA
-# pca = PCA(n_components=1, svd_solver='full')
-# pca.fit(X.T)
-# pca.explained_variance_ratio_
-
-
-# X1D = dim_red(X, 1)
-
-# fig = plt.figure()
-# ax = fig.add_subplot(projection='3d')
-# ax.scatter(X1D, all_labels[:,0], all_labels[:,1],)
-# ax.view_init(30, 120 )
-
-# # X1D = dim_red(X, 1)
-# import matplotlib.pyplot as plt
-# plt.scatter(X1D[:,0], X1D[:,1])
-
-#################
-
+# testing params
+# max_trials = 2
+# n_epochs = 150
+# boots = 1
 
 
 ################### hyperparameter tuning ###################
-
 # region
 all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
-
-
 
 split = StratifiedShuffleSplit(n_splits = 1, test_size = 0.35, random_state = 42)
 for train_index, test_index in split.split(new_df_num, all_labels_dis):
@@ -232,7 +102,7 @@ def build_model(hp):
     learning_rate = hp.Float("lr", min_value=1e-4, max_value=1e-1, sampling="log")
     decay_rate = hp.Float("decay", min_value=1e-7, max_value=9e-1, sampling="log")
     
-    optimizer = keras.optimizers.SGD(
+    optimizer = keras.optimizers.legacy.SGD(
         learning_rate = learning_rate,
         momentum = 0.90,
         nesterov = True,
@@ -250,10 +120,10 @@ def build_model(hp):
 tuner = keras_tuner.BayesianOptimization(
     hypermodel=build_model,
     objective="val_loss",
-    # max_trials=max_trials,
-    max_trials=10,
+    max_trials=max_trials,
+    # max_trials=10,
     overwrite=True,
-    project_name="GAAA",
+    project_name="GAAA", # random folder name
 )
 
 early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience =100, restore_best_weights=True, mode = 'min')
@@ -310,8 +180,7 @@ with open(o_name + "_params.txt", 'w') as f:
     f.write( str(myparams) + "\n" )
 
 # endregion
-
-myparams = {'num_layers': 8, 'drop_0': 0.00015288259146435229, 'units_0': 26, 'drop_1': 0.02365370227603947, 'units_1': 95, 'drop_2': 0.0019439356344310324, 'units_2': 29, 'drop_3': 0.002818964756443786, 'units_3': 59, 'lr': 0.009761241552629777, 'decay': 0.003623615836258005, 'drop_4': 0.0006875387406483257, 'units_4': 68, 'drop_5': 0.07071271931600467, 'units_5': 47, 'drop_6': 0.0001, 'units_6': 5, 'drop_7': 0.0001, 'units_7': 5}
+# myparams = {'num_layers': 8, 'drop_0': 0.00015288259146435229, 'units_0': 26, 'drop_1': 0.02365370227603947, 'units_1': 95, 'drop_2': 0.0019439356344310324, 'units_2': 29, 'drop_3': 0.002818964756443786, 'units_3': 59, 'lr': 0.009761241552629777, 'decay': 0.003623615836258005, 'drop_4': 0.0006875387406483257, 'units_4': 68, 'drop_5': 0.07071271931600467, 'units_5': 47, 'drop_6': 0.0001, 'units_6': 5, 'drop_7': 0.0001, 'units_7': 5}
 
 ##########   CROSS-VALIDATION ###########
 
@@ -346,7 +215,7 @@ def build_model(params, input_shape):
     learning_rate = params['lr']
     decay_rate    = params['decay']
     
-    optimizer = keras.optimizers.SGD(
+    optimizer = keras.optimizers.legacy.SGD(
         learning_rate = learning_rate,
         momentum = 0.90,
         nesterov = True,
