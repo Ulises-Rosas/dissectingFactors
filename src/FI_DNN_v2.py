@@ -1,20 +1,75 @@
 import os
 import sys
 import time
-import pickle
+import csv
+import random
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# import csv
+
 import keras_tuner
 import numpy as np 
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-
 from sklearn.model_selection import  StratifiedShuffleSplit
-
 import tensorflow as tf
 from tensorflow import keras
+
+
+def split_data(X, y, num_test, seed = 123):
+    random.seed(seed)
+    n,_ = X.shape
+
+    test_idx = random.sample(range(n), k = num_test)
+    train_idx = list( set(range(n)) - set(test_idx) )
+
+    X_train, X_test = X[train_idx,:], X[test_idx,:]
+    y_train, y_test = y[train_idx]  , y[test_idx]
+
+    return X_train, X_test, y_train, y_test
+
+
+def permutation_importance(X, y, model, num_test = 100, seed = 12038, iterations = 1000):
+    """
+    Permutation importance
+
+    X: data
+    y: target
+    model: model
+    num_test: number of test samples
+    seed: random seed
+    iterations: number of iterations
+
+    returns: Feature importance for all features. 
+        Each column represents the change in error
+    """
+
+    np.random.seed(seed)
+
+    n,p = X.shape
+
+    X_train, X_test, y_train,y_test = split_data(X, y, num_test, seed = seed)
+    model.fit(X_train, y_train)
+    error_orig = model.score(X_test, y_test)
+
+
+    out = np.zeros((iterations, p))
+
+    for i in range(iterations):
+
+        for j in range(X_test.shape[1]):
+            # Create a copy of X_test
+            X_test_copy = X_test.copy()
+
+            # Scramble the values of the given predictor
+            X_test_copy[:,j] = np.random.permutation(X_test_copy[:,j])
+                        
+            # Calculate the new RMSE
+            error_perm = model.score(X_test_copy, y_test)
+
+            out[i,j] = error_perm - error_orig
+
+    return out
 
 
 def do_resampling_dis(X_train_new, y_train):
@@ -69,11 +124,6 @@ def do_resampling_dis(X_train_new, y_train):
 
 def _scaler(ref, dat, include_clip = True):
 
-    # from sklearn.preprocessing import (
-    #     StandardScaler,MinMaxScaler,QuantileTransformer,
-    #     normalize,MaxAbsScaler,LabelEncoder, OneHotEncoder
-    #     )
-    # ref, dat = train_num, train_num
     from sklearn.preprocessing import StandardScaler
 
     standarizer = StandardScaler().fit(ref)
@@ -160,6 +210,56 @@ hyper_file = os.path.join(base_path, 'hyperparamters/DNN_Encoder_PROTA.txt')
 # data --------------------------------------
 
 
+# read tsv features_file file
+feature_names = []
+joined_df = {}
+n_trees = 2
+
+with open(features_file, 'r') as f:
+    rd = csv.reader(f, delimiter = '\t')
+    for i,row in enumerate(rd):
+        if i == 0:
+            feature_names = row
+        else:
+            joined_df[row[0]] = row[1:]
+
+au_data = {k:[0]*n_trees for k in joined_df.keys() }
+
+with open(all_ggi_results, 'r') as f:
+    rd = csv.reader(f, delimiter = '\t')
+    for i,row in enumerate(rd):
+        if i == 0:
+            continue
+
+        if row[0] not in au_data:
+            continue
+
+        tree_id = int(row[1])
+        au_test = float(row[4])
+
+        au_data[row[0]][tree_id - 1] = au_test
+
+au_data = {k:au_data[k] for k in au_data if sum(au_data[k]) > 0}
+
+# intersection between au_data and joined_df
+intersection = set(au_data.keys()).intersection(joined_df.keys())
+
+X = np.zeros((len(intersection), len(feature_names)-1))
+y = np.zeros((len(intersection), n_trees))
+
+for i,seq in enumerate(intersection):
+    # print(i, seq)
+    X[i,:] = np.array(joined_df[seq]).astype(float)
+    y[i,:] = au_data[seq]
+
+
+
+
+
+
+
+
+
 def read_features(features_file):
     return pd.read_csv(features_file, sep = '\t')
 
@@ -201,7 +301,7 @@ all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
 # boots = 20
 ######## iteration parameters ###################
 # tests
-max_trials = 50
+max_trials = 5
 n_epochs = 100
 boots = 2
 
@@ -278,10 +378,10 @@ tuner = keras_tuner.BayesianOptimization(
     max_trials=max_trials,
     # max_trials=10,
     overwrite=True,
-    project_name="GAAA", # random folder name
+    project_name="keras_hypopt", # random folder name
 )
 
-# early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience =100, restore_best_weights=True, mode = 'min')
+early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience =100, restore_best_weights=True, mode = 'min')
 
 tuner.search(
     x = resampled_features,
@@ -291,12 +391,12 @@ tuner.search(
         X_test_new, 
         y_test, 
     ),
-    # callbacks=[
-    #     early_stopping_cb,
-    #     # onecycle
-    # ],
-    # workers=10,
-    # batch_size = 32,
+    callbacks=[
+        early_stopping_cb,
+        # onecycle
+    ],
+    # workers=20,
+    batch_size = 32,
 )
 
 # import time
@@ -305,9 +405,9 @@ loss,cos_simi = sele_model.evaluate( X_test_new, y_test)
 
 o_name_base = f"tuner_E{round(loss,6)}_S{round(cos_simi,6)}_ID{int(time.time())}_encoder_{suffix}"
 o_name = os.path.join( out_folder, o_name_base )
-
-with open( o_name, 'wb') as f:
-    pickle.dump(tuner, f)
+import json
+with open( o_name, 'w') as f:
+    json.dump( tuner.get_best_hyperparameters()[0].values, f)
 
 print()
 print(
@@ -329,12 +429,12 @@ cos sim : {cos_simi2}
 )
 print()
 
-myparams = tuner.get_best_hyperparameters()[0].values
-print( myparams )
+# read o_name
+with open(o_name, 'r') as f:
+    myparams = eval(f.readline().strip())
 
 
-with open(o_name + "_params.txt", 'w') as f:
-    f.write( str(myparams) + "\n" )
+
 
 # endregion
 # myparams = {'num_layers': 8, 'drop_0': 0.00015288259146435229, 'units_0': 26, 'drop_1': 0.02365370227603947, 'units_1': 95, 'drop_2': 0.0019439356344310324, 'units_2': 29, 'drop_3': 0.002818964756443786, 'units_3': 59, 'lr': 0.009761241552629777, 'decay': 0.003623615836258005, 'drop_4': 0.0006875387406483257, 'units_4': 68, 'drop_5': 0.07071271931600467, 'units_5': 47, 'drop_6': 0.0001, 'units_6': 5, 'drop_7': 0.0001, 'units_7': 5}
@@ -389,6 +489,12 @@ def build_model(params, input_shape):
 
 
 early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience = 100, restore_best_weights=True, mode = 'min')
+
+
+
+
+
+
 
 # prota
 # lowest_loss = float('+Inf')
