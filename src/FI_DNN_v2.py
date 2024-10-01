@@ -252,41 +252,40 @@ for i,seq in enumerate(intersection):
     X[i,:] = np.array(joined_df[seq]).astype(float)
     y[i,:] = au_data[seq]
 
+n,p = X.shape
+
+X_train, X_test, y_train, y_test = split_data(X, y, num_test = int(0.35*n), seed = 123)
 
 
 
 
+# def read_features(features_file):
+#     return pd.read_csv(features_file, sep = '\t')
+
+# def read_ggi_df(all_ggi_results):
+
+#     if not all_ggi_results:
+#         return None
+
+#     ggi_rows = []
+#     with open(all_ggi_results, 'r') as f:
+#         reader = csv.reader(f, delimiter = '\t')
+#         for row in reader:
+#             ggi_rows.append(row)
+
+#     return ggi_rows
 
 
 
 
-def read_features(features_file):
-    return pd.read_csv(features_file, sep = '\t')
+# new_df = read_features(features_file)
+# ggi_df = read_ggi_df(all_ggi_results)
 
-def read_ggi_df(all_ggi_results):
+# ggi_pd = pd.DataFrame( ggi_df[1:], columns=ggi_df[0]   )
 
-    if not all_ggi_results:
-        return None
-
-    ggi_rows = []
-    with open(all_ggi_results, 'r') as f:
-        reader = csv.reader(f, delimiter = '\t')
-        for row in reader:
-            ggi_rows.append(row)
-
-    return ggi_rows
-
-
-
-
-new_df = read_features(features_file)
-ggi_df = read_ggi_df(all_ggi_results)
-
-ggi_pd = pd.DataFrame( ggi_df[1:], columns=ggi_df[0]   )
-
-all_labels, new_df = make_au_labels( ggi_pd, new_df )
-new_df_num = new_df.drop(["aln_base"], axis = 1)
-all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
+# all_labels, new_df = make_au_labels( ggi_pd, new_df )
+# new_df_num = new_df.drop(["aln_base"], axis = 1)
+# all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
 
 
 
@@ -309,22 +308,31 @@ boots = 2
 
 ################### hyperparameter tuning ###################
 # region
-all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
+# all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
 
-split = StratifiedShuffleSplit(n_splits = 1, test_size = 0.35, random_state = 42)
-for train_index, test_index in split.split(new_df_num, all_labels_dis):
-    # train_index, test_index
+# split = StratifiedShuffleSplit(n_splits = 1, test_size = 0.35, random_state = 42)
+# for train_index, test_index in split.split(new_df_num, all_labels_dis):
+#     # train_index, test_index
 
-    X_train = new_df_num.iloc[train_index,:]
-    X_test  = new_df_num.iloc[test_index,:]
+#     # X_train = new_df_num.iloc[train_index,:]
+#     # X_test  = new_df_num.iloc[test_index,:]
     
-    y_train = all_labels[train_index]
-    y_test  = all_labels[test_index]
+#     # y_train = all_labels[train_index]
+#     # y_test  = all_labels[test_index]
 
-X_train_new = transform_data(X_train, X_train)
-X_test_new  = transform_data(X_train, X_test)
+#     X_train = X[train_index,:]
+#     X_test  = X[test_index,:]
+    
+#     y_train = y[train_index]
+#     y_test  = y[test_index]
 
-resampled_features, resampled_labels = do_resampling_dis(X_train_new, y_train)
+
+
+
+# X_train_new = transform_data(X_train, X_train)
+# X_test_new  = transform_data(X_train, X_test)
+
+# resampled_features, resampled_labels = do_resampling_dis(X_train_new, y_train)
 
 # K = keras.backend
 encoder_weights = []
@@ -384,11 +392,11 @@ tuner = keras_tuner.BayesianOptimization(
 early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience =100, restore_best_weights=True, mode = 'min')
 
 tuner.search(
-    x = resampled_features,
-    y = resampled_labels,
+    x = X_train,
+    y = y_train,
     epochs=n_epochs,
     validation_data=(
-        X_test_new, 
+        X_test, 
         y_test, 
     ),
     callbacks=[
@@ -401,7 +409,7 @@ tuner.search(
 
 # import time
 sele_model = tuner.get_best_models()[0]
-loss,cos_simi = sele_model.evaluate( X_test_new, y_test)
+loss,cos_simi = sele_model.evaluate( X_test, y_test)
 
 o_name_base = f"tuner_E{round(loss,6)}_S{round(cos_simi,6)}_ID{int(time.time())}_encoder_{suffix}"
 o_name = os.path.join( out_folder, o_name_base )
@@ -419,7 +427,7 @@ cos sim : {cos_simi}
 )
 print()
 
-loss2, cos_simi2 = sele_model.evaluate(resampled_features, resampled_labels)
+loss2, cos_simi2 = sele_model.evaluate(X_train, y_train)
 print(
 f"""
 Hyperparameter Train dataset
