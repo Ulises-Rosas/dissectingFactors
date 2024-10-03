@@ -300,41 +300,10 @@ X_train, X_test, y_train, y_test = split_data(X, y, num_test = int(0.35*n), seed
 # boots = 20
 ######## iteration parameters ###################
 # tests
-max_trials = 5
-n_epochs = 100
+max_trials = 10
+n_epochs = 1000
 boots = 2
 
-
-
-################### hyperparameter tuning ###################
-# region
-# all_labels_dis = np.argmax( all_labels, axis=1 ) == 0
-
-# split = StratifiedShuffleSplit(n_splits = 1, test_size = 0.35, random_state = 42)
-# for train_index, test_index in split.split(new_df_num, all_labels_dis):
-#     # train_index, test_index
-
-#     # X_train = new_df_num.iloc[train_index,:]
-#     # X_test  = new_df_num.iloc[test_index,:]
-    
-#     # y_train = all_labels[train_index]
-#     # y_test  = all_labels[test_index]
-
-#     X_train = X[train_index,:]
-#     X_test  = X[test_index,:]
-    
-#     y_train = y[train_index]
-#     y_test  = y[test_index]
-
-
-
-
-# X_train_new = transform_data(X_train, X_train)
-# X_test_new  = transform_data(X_train, X_test)
-
-# resampled_features, resampled_labels = do_resampling_dis(X_train_new, y_train)
-
-# K = keras.backend
 encoder_weights = []
 
 
@@ -342,7 +311,7 @@ encoder_weights = []
 
 def build_model(hp):
     model = keras.Sequential()
-    model.add( keras.layers.InputLayer( input_shape = resampled_features.shape[1] ) )
+    model.add( keras.layers.InputLayer( input_shape = X_train.shape[1] ) )
 
     # Tune the number of layers.
     for i in range(hp.Int("num_layers", 4, 10)):
@@ -407,6 +376,7 @@ tuner.search(
     batch_size = 32,
 )
 
+
 # import time
 sele_model = tuner.get_best_models()[0]
 loss,cos_simi = sele_model.evaluate( X_test, y_test)
@@ -447,11 +417,6 @@ with open(o_name, 'r') as f:
 # endregion
 # myparams = {'num_layers': 8, 'drop_0': 0.00015288259146435229, 'units_0': 26, 'drop_1': 0.02365370227603947, 'units_1': 95, 'drop_2': 0.0019439356344310324, 'units_2': 29, 'drop_3': 0.002818964756443786, 'units_3': 59, 'lr': 0.009761241552629777, 'decay': 0.003623615836258005, 'drop_4': 0.0006875387406483257, 'units_4': 68, 'drop_5': 0.07071271931600467, 'units_5': 47, 'drop_6': 0.0001, 'units_6': 5, 'drop_7': 0.0001, 'units_7': 5}
 
-
-
-
-##########   CROSS-VALIDATION ###########
-print('starting cross validation')
 
 # region
 def build_model(params, input_shape):
@@ -495,11 +460,53 @@ def build_model(params, input_shape):
     )
     return model
 
-
 early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience = 100, restore_best_weights=True, mode = 'min')
 
+model = build_model(myparams, input_shape = X_train.shape[-1])
+
+model.fit(
+    X_train,
+    y_train,
+    epochs=n_epochs,
+    validation_data=( X_test, y_test ),
+    callbacks =[
+            early_stopping_cb,
+    ],
+    workers=10,
+    use_multiprocessing=True,
+    verbose=0
+)
+
+error_orig, cos_orig = model.evaluate(X_test, y_test)
+
+def permutation_errors(iterations, X_test, y_test, model, error_orig):
+
+    out = np.zeros((iterations, X_test.shape[1]))
+    for i in range(iterations):
+        print(f'Iteration: {i}')
+        for j in range(X_test.shape[1]):
+            # Create a copy of X_test
+            X_test_copy = X_test.copy()
+
+            # Scramble the values of the given predictor
+            X_test_copy[:,j] = np.random.permutation(X_test_copy[:,j])
+                        
+            # Calculate the new RMSE
+            error_perm,_ = model.evaluate(X_test_copy, y_test, verbose=0)
+
+            out[i,j] = error_perm - error_orig
+
+    return out
 
 
+iterations = 30
+FI = permutation_errors(iterations, X_test, y_test, model, error_orig)
+
+import matplotlib.pyplot as plt
+plt.bar(range(p), np.mean(FI, axis=0))
+plt.errorbar(range(p), np.mean(FI, axis=0), np.std(FI, axis=0), fmt='.', color='black')
+# plt.xticks(range(3), ['feature 1', 'feature 2', 'feature 3'])
+plt.ylabel('RMSE increase')
 
 
 
@@ -508,64 +515,64 @@ early_stopping_cb = keras.callbacks.EarlyStopping('val_loss', patience = 100, re
 # lowest_loss = float('+Inf')
 # n_epochs = 5
 
-cvscores = []
-for b in range(boots):
-    sys.stdout.write(f'\n\nboot: {b}\n')
+# cvscores = []
+# for b in range(boots):
+#     sys.stdout.write(f'\n\nboot: {b}\n')
 
-    kfold = StratifiedKFold(n_splits=4, shuffle=True, random_state=None)
+#     kfold = StratifiedKFold(n_splits=4, shuffle=True, random_state=None)
 
-    cv = 1
-    for train, test in kfold.split(new_df, all_labels_dis):
-        # train,test
-        # len(test)/len(train)
+#     cv = 1
+#     for train, test in kfold.split(new_df, all_labels_dis):
+#         # train,test
+#         # len(test)/len(train)
         
-        X_train = new_df_num.iloc[train,:]
-        y_train = all_labels[train]
+#         X_train = new_df_num.iloc[train,:]
+#         y_train = all_labels[train]
 
-        X_test = new_df_num.iloc[test,:]
-        y_test = all_labels[test]
+#         X_test = new_df_num.iloc[test,:]
+#         y_test = all_labels[test]
 
-        X_train_new = transform_data(X_train, X_train)
-        X_test_new  = transform_data(X_train, X_test)
+#         X_train_new = transform_data(X_train, X_train)
+#         X_test_new  = transform_data(X_train, X_test)
 
-        resampled_features, resampled_labels = do_resampling_dis(X_train_new, y_train)
+#         resampled_features, resampled_labels = do_resampling_dis(X_train_new, y_train)
 
-        model = build_model(myparams, input_shape = resampled_features.shape[-1])
+#         model = build_model(myparams, input_shape = resampled_features.shape[-1])
 
-        model.fit(
-            resampled_features,
-            resampled_labels,
-            epochs=n_epochs,
-            validation_data=( X_test_new, y_test ),
-            callbacks =[
-                 early_stopping_cb,
-            ],
-            workers=10,
-            use_multiprocessing=True,
-            verbose=0
-        )
-        # evaluate the model
-        loss, cos_simi = model.evaluate(X_test_new, y_test, verbose=0)
+#         model.fit(
+#             resampled_features,
+#             resampled_labels,
+#             epochs=n_epochs,
+#             validation_data=( X_test_new, y_test ),
+#             callbacks =[
+#                  early_stopping_cb,
+#             ],
+#             workers=10,
+#             use_multiprocessing=True,
+#             verbose=0
+#         )
+#         # evaluate the model
+#         loss, cos_simi = model.evaluate(X_test_new, y_test, verbose=0)
 
-        sys.stdout.write("\n\033[92m%s: %.2f\033[0m\n" % (model.metrics_names[0], loss))
-        sys.stdout.write("%s: %.2f\n"                  % (model.metrics_names[1], cos_simi))
-        sys.stdout.write("Calculating Feature Importances\n")
-        sys.stdout.flush()
+#         sys.stdout.write("\n\033[92m%s: %.2f\033[0m\n" % (model.metrics_names[0], loss))
+#         sys.stdout.write("%s: %.2f\n"                  % (model.metrics_names[1], cos_simi))
+#         sys.stdout.write("Calculating Feature Importances\n")
+#         sys.stdout.flush()
 
-        perm = PermutationImportance(
-            model, 
-            scoring = 'neg_mean_squared_error', 
-            n_iter=100
-            ).fit(X_test_new, y_test)
-        ext_ = '_boot%s_cv%s_FI.txt' % (b, cv)
+#         perm = PermutationImportance(
+#             model, 
+#             scoring = 'neg_mean_squared_error', 
+#             n_iter=100
+#             ).fit(X_test_new, y_test)
+#         ext_ = '_boot%s_cv%s_FI.txt' % (b, cv)
 
-        (
-        eli5.explain_weights_df(
-            perm,
-            feature_names = new_df_num.columns.tolist() )
-            .sort_values( 'weight', ascending=False )
-            .to_csv( os.path.join(out_folder, suffix + ext_) )
-        )
-        cv += 1
+#         (
+#         eli5.explain_weights_df(
+#             perm,
+#             feature_names = new_df_num.columns.tolist() )
+#             .sort_values( 'weight', ascending=False )
+#             .to_csv( os.path.join(out_folder, suffix + ext_) )
+#         )
+#         cv += 1
 
-# endregion
+# # endregion
