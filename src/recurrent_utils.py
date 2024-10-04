@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.metrics import  accuracy_score, plot_confusion_matrix
 from sklearn.model_selection import  StratifiedShuffleSplit
 
 import os
